@@ -26,7 +26,10 @@
     // 3. background-image
     document.querySelectorAll("div, a, span").forEach(el => {
       const bg = window.getComputedStyle(el).backgroundImage;
-      if (bg && bg.startsWith("url(")) urls.add(bg.slice(5, -2));
+      if (bg && bg.startsWith("url(")) {
+        const extracted = bg.slice(5, -2).trim();
+        if (extracted) urls.add(extracted);
+      }
     });
 
     // 4. Blob / AVIF 対策：canvas に描画して PNG に変換
@@ -34,14 +37,16 @@
     for (const url of urls) {
       if (!url) continue;
 
-      // AVIF または Blob URL の場合
       if (url.endsWith(".avif") || url.startsWith("blob:")) {
         try {
           const img = await new Promise((resolve, reject) => {
             const i = new Image();
-            i.crossOrigin = "anonymous";
+            i.crossOrigin = "anonymous"; // ✅ CORS対策
             i.onload = () => resolve(i);
-            i.onerror = () => reject(i);
+            i.onerror = () => {
+              console.warn("❌ Failed to load image for canvas conversion:", url);
+              reject(i);
+            };
             i.src = url;
           });
 
@@ -58,6 +63,7 @@
         finalUrls.push(url);
       }
     }
+
     console.log("✅ Final image count:", finalUrls.length);
     console.log("✅ Final image URLs:", finalUrls);
     return [...new Set(finalUrls)];
@@ -78,13 +84,13 @@
       chrome.runtime.sendMessage({ type: "imagesUpdatedPartial", images: current });
     } catch {}
   }
-  
+
   async function forceReloadImages() {
-    await new Promise(r => setTimeout(r, 500)); // ✅ 500ms待機
+    await new Promise(r => setTimeout(r, 500)); // ✅ ページ描画待ち
     const all = await getAllImages();
     console.log("🔁 forceReloadImages: found", all.length, "images");
     console.log("🔁 image URLs:", all);
-    lastImageSet = new Set(all); // ✅ 状態を強制更新
+    lastImageSet = new Set(all);
     try {
       chrome.runtime.sendMessage({ type: "imagesUpdatedFull", images: all });
     } catch (e) {
@@ -95,7 +101,12 @@
   function startObserver() {
     if (window.observer) window.observer.disconnect();
     window.observer = new MutationObserver(debounceUpdate);
-    window.observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "style"] });
+    window.observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["src", "style"]
+    });
     updateImages();
   }
 
@@ -123,7 +134,9 @@
     window.addEventListener("locationchange", () => {
       clearTimeout(window.__locationChangeTimer);
       window.__locationChangeTimer = setTimeout(() => {
-        try { chrome.runtime.sendMessage({ type: "pageChanged" }); } catch {}
+        try {
+          chrome.runtime.sendMessage({ type: "pageChanged" });
+        } catch {}
         startObserver();
       }, 300);
     });
@@ -131,17 +144,17 @@
     chrome.runtime.onMessage.addListener((message) => {
       if (message.type === "tabActivated") {
         console.log("Tab activated:", location.href);
-        startObserver(); // ✅ タブがアクティブになったら再監視開始
+        startObserver();
       }
     });
 
     chrome.runtime.onMessage.addListener((message) => {
       console.log("📩 Message received in content.js:", message.type);
       if (message.type === "requestImages") {
-        updateImages(); // 差分送信
+        updateImages();
       } else if (message.type === "forceReload") {
         console.log("🔁 forceReload triggered");
-        forceReloadImages(); // 全再送信
+        forceReloadImages();
       }
     });
   }

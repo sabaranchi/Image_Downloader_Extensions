@@ -8,9 +8,12 @@
     "activeTab",
     "scripting",
     "downloads",
-    "sidePanel"
+    "sidePanel",
+    "declarativeNetRequest"
   ],
-  "host_permissions": ["<all_urls>", "http://*/*", "https://*/*"],
+  "host_permissions": [
+    "<all_urls>", "http://*/*", "https://*/*", "*://i.pximg.net/*"
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "Open Image Panel"
@@ -28,5 +31,12 @@
       "run_at": "document_idle",
       "all_frames": true
     }
-  ]
+  ],
+  "declarative_net_request": {
+    "rule_resources": [{
+      "id": "pixiv-referer-fix",
+      "enabled": true,
+      "path": "rules.json"
+    }]
+  }
 }

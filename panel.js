@@ -8,7 +8,11 @@ function renderImages(urls) {
 
   urls.forEach(u => {
     if (!u || typeof u !== "string") return;
-    if (u.startsWith("data:image") || u.match(/\.(png|jpg|jpeg|gif|webp|avif)$/i)) {
+    if (
+      u.startsWith("data:image") ||
+      u.includes(".jpg") || u.includes(".jpeg") ||
+      u.includes(".png") || u.includes(".webp") || u.includes(".gif") || u.includes(".avif")
+    ) {
       imageUrls.push(u);
     }
   });
