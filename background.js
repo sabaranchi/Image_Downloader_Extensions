@@ -14,3 +14,12 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
     }
   });
 });
+
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message.type === "sidePanelOpened") {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tabId = tabs[0].id;
+      chrome.tabs.sendMessage(tabId, { type: "forceReload" });
+    });
+  }
+});

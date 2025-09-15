@@ -1,6 +1,9 @@
 const checkedMap = window.checkedMap || (window.checkedMap = {});
 const allImageSet = new Set();
 
+// サイドパネルが読み込まれた瞬間に通知
+chrome.runtime.sendMessage({ type: "sidePanelOpened" });
+
 function renderImages(urls) {
   const container = document.getElementById("images");
   container.innerHTML = "";
