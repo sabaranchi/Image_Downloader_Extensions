@@ -13,8 +13,9 @@ function renderImages(urls) {
     if (!u || typeof u !== "string") return;
     if (
       u.startsWith("data:image") ||
-      u.includes(".jpg") || u.includes(".jpeg") ||
-      u.includes(".png") || u.includes(".webp") || u.includes(".gif") || u.includes(".avif")
+      u.includes(".jpg") || u.includes("=jpg") || u.includes(".jpeg") ||
+      u.includes(".png") || u.includes("=png") || u.includes(".webp") || u.includes("=webp") || 
+      u.includes(".gif") || u.includes("=gif") || u.includes(".avif") || u.includes("=avif")
     ) {
       imageUrls.push(u);
     }
