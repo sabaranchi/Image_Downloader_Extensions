@@ -40,6 +40,25 @@ function renderImages(urls) {
     div.querySelector("input").addEventListener("change", e => {
       checkedMap[url] = e.target.checked;
     });
+    // Prevent label click from causing browser focus/scroll jump.
+    // Instead toggle checkbox programmatically so the panel doesn't 'rollback'.
+    const checkbox = div.querySelector('input');
+    const labelEl = div.querySelector('label');
+    if (labelEl) {
+      labelEl.addEventListener('click', (e) => {
+        // If the click originated from the actual checkbox, allow default.
+        if (e.target === checkbox) return;
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          checkbox.checked = !checkbox.checked;
+          checkedMap[url] = checkbox.checked;
+          // dispatch change event so any other listeners are notified
+          const ev = new Event('change', { bubbles: true });
+          checkbox.dispatchEvent(ev);
+        } catch (err) {}
+      });
+    }
   });
 }
 
@@ -117,3 +136,44 @@ document.addEventListener("DOMContentLoaded", () => {
   console.log("🚀 DOMContentLoaded → requestImages");
   requestImages("requestImages");
 });
+
+// ===== Thumbnail width controls (toolbar) =====
+(function() {
+  const RANGE_ID = 'thumbRange';
+  const NUMBER_ID = 'thumbNumber';
+  const STORAGE_KEY = 'thumbMinWidth';
+
+  function applyValue(px) {
+    if (!px) return;
+    if (typeof px === 'number') px = `${px}px`;
+    document.documentElement.style.setProperty('--thumb-min', px);
+  }
+
+  // init elements (may not exist in older versions)
+  const range = document.getElementById(RANGE_ID);
+  const number = document.getElementById(NUMBER_ID);
+  if (!range || !number) return;
+
+  // load saved value
+  const saved = localStorage.getItem(STORAGE_KEY);
+  const initial = saved ? parseInt(saved, 10) : parseInt(range.value, 10);
+  range.value = initial;
+  number.value = initial;
+  applyValue(initial);
+
+  function onInput(v) {
+    const n = parseInt(v, 10) || 100;
+    range.value = n;
+    number.value = n;
+    applyValue(n);
+    try { localStorage.setItem(STORAGE_KEY, String(n)); } catch(e) {}
+  }
+
+  range.addEventListener('input', (e) => onInput(e.target.value));
+  number.addEventListener('change', (e) => {
+    let val = parseInt(e.target.value, 10) || 100;
+    if (val < parseInt(number.min,10)) val = parseInt(number.min,10);
+    if (val > parseInt(number.max,10)) val = parseInt(number.max,10);
+    onInput(val);
+  });
+})();

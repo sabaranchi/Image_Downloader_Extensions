@@ -38,10 +38,12 @@
     button:hover {
       background-color: #005fa3;
     }
+    :root { --thumb-min: 200px; }
     .img-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-      gap: 10px;
+      /* larger grid cells so thumbnails are bigger; controlled by toolbar */
+      grid-template-columns: repeat(auto-fill, minmax(var(--thumb-min), 1fr));
+      gap: 12px;
     }
     .img-item {
       display: flex;
@@ -53,8 +55,9 @@
       box-shadow: 0 0 2px rgba(0,0,0,0.1);
     }
     img {
-      max-width: 100px;
-      max-height: 100px;
+      /* larger thumbnails for detail viewing */
+      max-width: 100%;
+      max-height: 100%;
       object-fit: cover;
       margin-bottom: 2px;
       border: 1px solid #ccc;
@@ -84,6 +87,12 @@
   ">
     <button id="reload" style="min-width: 120px;">🔄 Reload</button>
     <button id="download" style="min-width: 120px;">⬇️ Download</button>
+    <!-- Thumbnail width control -->
+    <div style="display:flex;align-items:center;gap:8px;margin-left:8px;">
+      <label for="thumbRange" style="font-size:12px;color:#333;margin-right:6px;">Thumb</label>
+      <input id="thumbRange" type="range" min="80" max="300" step="10" value="200" style="width:180px;">
+      <input id="thumbNumber" type="number" min="80" max="300" step="10" value="200" style="width:64px;padding:6px;border-radius:4px;border:1px solid #ccc;">
+    </div>
   </div>
 
   <div class="img-grid" id="images"></div>
