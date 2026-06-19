@@ -1,25 +1,44 @@
 {
   "manifest_version": 3,
-  "name": "Image Downloader",
-  "version": "1.0",
-  "description": "Select and download images from the current page as a ZIP.",
+  "name": "Media Viewer",
+  "version": "1.0.1",
+  "description": "Show and download media from the current page.",
   "permissions": [
-    "tabs",
     "activeTab",
-    "scripting",
+    "declarativeNetRequest",
     "downloads",
+    "scripting",
     "sidePanel",
-    "declarativeNetRequest"
+    "tabs",
+    "webRequest"
   ],
   "host_permissions": [
-    "<all_urls>", "http://*/*", "https://*/*", "*://i.pximg.net/*"
+    "<all_urls>"
   ],
-  "action": {
-    "default_popup": "popup.html",
-    "default_title": "Open Image Panel"
+  "web_accessible_resources": [
+    {
+      "resources": ["page_inject.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "referer-fix",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
   },
   "side_panel": {
-    "default_path": "panel.html"
+    "default_path": "popup.html"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
   },
   "background": {
     "service_worker": "background.js"
@@ -32,11 +51,9 @@
       "all_frames": true
     }
   ],
-  "declarative_net_request": {
-    "rule_resources": [{
-      "id": "pixiv-referer-fix",
-      "enabled": true,
-      "path": "rules.json"
-    }]
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
   }
 }

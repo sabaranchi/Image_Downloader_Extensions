@@ -1,173 +1,366 @@
 (() => {
-  if (window.__imageObserverInitialized) return;
-  window.__imageObserverInitialized = true;
+  if (window.__mediaDownloaderContentLoaded) return;
+  window.__mediaDownloaderContentLoaded = true;
 
-  let lastImageSet = new Set();
-  window.observer = null;
+  const seenUrls = new Set();
+  const blobMap = {};
 
-  async function getAllImages() {
-    console.log("🕵️ getAllImages called at", new Date().toLocaleTimeString());
-    console.log("🖼️ img count:", document.querySelectorAll("img").length);
-    const urls = new Set();
+  function injectPageScript() {
+    try {
+      if (document.querySelector("script[data-media-downloader-pageinject]")) return;
+      const script = document.createElement("script");
+      script.src = chrome.runtime.getURL("page_inject.js");
+      script.dataset.mediaDownloaderPageinject = "1";
+      (document.documentElement || document.head || document.body).appendChild(script);
+    } catch (error) {
+      console.warn("media-downloader: page injection failed", error);
+    }
+  }
 
-    // 1. <img> タグ
-    document.querySelectorAll("img").forEach(img => {
-      if (img.currentSrc) urls.add(img.currentSrc);
-      else if (img.src) urls.add(img.src);
+  injectPageScript();
+
+  window.addEventListener("message", (event) => {
+    const data = event.data;
+    if (data && data.__BLOB_MAP) Object.assign(blobMap, data.__BLOB_MAP);
+    if (data && data.__CAPTURE_PUSH && data.__CAPTURE_PUSH.url) {
+      const item = mediaItemFromUrl(data.__CAPTURE_PUSH.url);
+      if (item) sendItems([item]);
+    }
+  });
+
+  function resolveUrl(url) {
+    if (!url || typeof url !== "string") return "";
+    if (!url.startsWith("blob:")) return url;
+    if (blobMap[url]) return blobMap[url];
+    try {
+      window.postMessage({ __RESOLVE_BLOB: url }, "*");
+    } catch {}
+    return blobMap[url] || url;
+  }
+
+  function filenameFromUrl(url, fallback) {
+    try {
+      const parsed = new URL(url, location.href);
+      const name = parsed.pathname.split("/").filter(Boolean).pop();
+      return name || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function extractCssUrls(value) {
+    if (!value || typeof value !== "string" || value === "none") return [];
+    const urls = [];
+    const re = /url\(["']?([^"')]+)["']?\)/g;
+    let match;
+    while ((match = re.exec(value)) !== null) {
+      if (match[1]) urls.push(match[1]);
+    }
+    return urls;
+  }
+
+  function pushAttributeMedia(candidate, items) {
+    const attrs = ["href", "src", "data-src", "data-url", "data-file", "data-audio", "data-media"];
+    attrs.forEach((attr) => {
+      const value = candidate.getAttribute?.(attr);
+      pushIfNew(items, mediaItemFromUrl(value));
     });
+  }
 
-    // 2. <canvas>
-    document.querySelectorAll("canvas").forEach(c => {
+  function extractMediaUrlsFromText(text) {
+    if (!text || typeof text !== "string") return [];
+    const urls = [];
+    const re = /https?:\\?\/\\?\/[^\s"'<>\\)]+?\.(?:m3u8|mp4|webm|mov|m4v|mp3|m4a|aac|flac|wav|png|jpe?g|webp|avif)(?:\?[^\s"'<>\\)]*)?/gi;
+    let match;
+    while ((match = re.exec(text)) !== null) {
+      urls.push(match[0].replaceAll("\\/", "/").replaceAll("&amp;", "&"));
+    }
+    return urls;
+  }
+
+  async function fetchWithCredentialFallback(url, options = {}) {
+    const baseOptions = {
+      method: "GET",
+      cache: "no-store",
+      referrer: location.href,
+      referrerPolicy: "no-referrer-when-downgrade",
+      ...options
+    };
+
+    let firstError = null;
+    for (const credentials of ["omit", "include"]) {
       try {
-        urls.add(c.toDataURL("image/png"));
-      } catch {}
-    });
-
-    // 3. background-image
-    document.querySelectorAll("div, a, span").forEach(el => {
-      const bg = window.getComputedStyle(el).backgroundImage;
-      if (bg && bg.startsWith("url(")) {
-        const extracted = bg.slice(5, -2).trim();
-        if (extracted) urls.add(extracted);
-      }
-    });
-
-    // 4. Blob / AVIF 対策：canvas に描画して PNG に変換
-    const finalUrls = [];
-    for (const url of urls) {
-      if (!url) continue;
-
-      if (url.endsWith(".avif") || url.startsWith("blob:")) {
-        try {
-          const img = await new Promise((resolve, reject) => {
-            const i = new Image();
-            i.crossOrigin = "anonymous"; // ✅ CORS対策
-            i.onload = () => resolve(i);
-            i.onerror = () => {
-              console.warn("❌ Failed to load image for canvas conversion:", url);
-              reject(i);
-            };
-            i.src = url;
-          });
-
-          const canvas = document.createElement("canvas");
-          canvas.width = img.naturalWidth;
-          canvas.height = img.naturalHeight;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0);
-          finalUrls.push(canvas.toDataURL("image/png"));
-        } catch {
-          finalUrls.push(url); // 失敗しても元のURL保持
-        }
-      } else {
-        finalUrls.push(url);
+        const response = await fetch(url, { ...baseOptions, credentials });
+        if (response.ok) return response;
+        firstError = new Error(`HTTP ${response.status}`);
+      } catch (error) {
+        firstError = error;
       }
     }
 
-    console.log("✅ Final image count:", finalUrls.length);
-    console.log("✅ Final image URLs:", finalUrls);
-    return [...new Set(finalUrls)];
+    throw firstError || new Error("Fetch failed");
   }
 
-  async function updateImages() {
-    const current = await getAllImages();
-    const currentSet = new Set(current);
+  function mediaItemFromUrl(url) {
+    if (!url || typeof url !== "string") return null;
+    const cleanUrl = resolveUrl(url);
+    const resolvedFromBlob = url.startsWith("blob:") && cleanUrl !== url;
+    if (cleanUrl.startsWith("blob:")) return null;
+    const path = cleanUrl.split("?")[0].toLowerCase();
+    if (/\.(png|jpe?g|gif|webp|avif|bmp|svg|ico)$/.test(path) || cleanUrl.startsWith("data:image/")) {
+      return { type: "image", url: cleanUrl, thumbnail: cleanUrl, filename: filenameFromUrl(cleanUrl, "image"), resolvedFromBlob };
+    }
+    if (/\.(mp4|webm|mov|m4v|ogv|ogg|m3u8)$/.test(path) || cleanUrl.startsWith("blob:")) {
+      return { type: "video", url: cleanUrl, thumbnail: null, filename: filenameFromUrl(cleanUrl, "video"), resolvedFromBlob, isHls: /\.m3u8$/i.test(path) };
+    }
+    if (/\.(mp3|wav|m4a|aac|flac|opus)$/.test(path)) {
+      return { type: "audio", url: cleanUrl, thumbnail: null, filename: filenameFromUrl(cleanUrl, "audio"), resolvedFromBlob };
+    }
+    return null;
+  }
 
-    const hasChanged =
-      current.length !== lastImageSet.size ||
-      [...currentSet].some(url => !lastImageSet.has(url));
+  function pushIfNew(items, item) {
+    if (!item || !item.url || seenUrls.has(item.url)) return;
+    seenUrls.add(item.url);
+    items.push(item);
+  }
 
-    if (!hasChanged) return;
+  function collectFromRoot(root, items) {
+    if (!root || root.nodeType !== Node.ELEMENT_NODE) return;
+    const element = root;
+    const selector = "img, picture source, video, audio, source, a[href], [style], [data-src], [data-url], [data-file], [data-audio], [data-media]";
+    const candidates = element.matches?.(selector) ? [element] : [];
+    candidates.push(...element.querySelectorAll?.(selector) || []);
 
-    lastImageSet = currentSet;
+    candidates.forEach((candidate) => {
+      if (candidate.matches("img, picture source")) {
+        const url = candidate.currentSrc || candidate.src || candidate.srcset?.split(",").pop()?.trim().split(/\s+/)[0];
+        pushIfNew(items, mediaItemFromUrl(url));
+        return;
+      }
+
+      if (candidate.matches("video")) {
+        const url = resolveUrl(candidate.currentSrc || candidate.src || candidate.querySelector("source")?.src);
+        if (!url || url.startsWith("blob:")) return;
+        pushIfNew(items, {
+          type: "video",
+          url,
+          thumbnail: candidate.poster || null,
+          filename: filenameFromUrl(url, "video"),
+          resolvedFromBlob: candidate.currentSrc?.startsWith("blob:") || candidate.src?.startsWith("blob:"),
+          isHls: url.split("?")[0].toLowerCase().endsWith(".m3u8")
+        });
+        return;
+      }
+
+      if (candidate.matches("audio")) {
+        const url = resolveUrl(candidate.currentSrc || candidate.src || candidate.querySelector("source")?.src);
+        if (!url || url.startsWith("blob:")) return;
+        pushIfNew(items, {
+          type: "audio",
+          url,
+          thumbnail: null,
+          filename: filenameFromUrl(url, "audio"),
+          resolvedFromBlob: candidate.currentSrc?.startsWith("blob:") || candidate.src?.startsWith("blob:")
+        });
+        return;
+      }
+
+      if (candidate.matches("source")) {
+        pushIfNew(items, mediaItemFromUrl(candidate.src || candidate.srcset?.split(",").pop()?.trim().split(/\s+/)[0]));
+        return;
+      }
+
+      pushAttributeMedia(candidate, items);
+
+      if (candidate.hasAttribute("style")) {
+        const inlineBg = candidate.style.backgroundImage;
+        extractCssUrls(inlineBg).forEach((url) => pushIfNew(items, mediaItemFromUrl(url)));
+      }
+    });
+  }
+
+  function collectComputedBackgrounds(items) {
+    const elements = Array.from(document.body?.querySelectorAll("*") || []).slice(0, 2500);
+    elements.forEach((element) => {
+      try {
+        const background = getComputedStyle(element).backgroundImage;
+        extractCssUrls(background).forEach((url) => pushIfNew(items, mediaItemFromUrl(url)));
+      } catch {}
+    });
+  }
+
+  function collectMedia({ reset = false, roots = null } = {}) {
+    if (reset) seenUrls.clear();
+    const items = [];
+
+    const scanRoots = roots?.length ? roots : [document.documentElement];
+    scanRoots.forEach((root) => collectFromRoot(root, items));
+    if (!roots?.length) collectComputedBackgrounds(items);
+
+    document.querySelectorAll('meta[property="og:image"], meta[name="twitter:image"], meta[property="og:video"], meta[property="og:audio"]').forEach((meta) => {
+      pushIfNew(items, mediaItemFromUrl(meta.content));
+    });
+
+    collectPerformanceMedia(items);
+    if (!roots?.length) collectScriptMedia(items);
+
+    return items;
+  }
+
+  function collectPerformanceMedia(items) {
     try {
-      chrome.runtime.sendMessage({ type: "imagesUpdatedPartial", images: current });
+      performance.getEntriesByType("resource").forEach((entry) => {
+        pushIfNew(items, mediaItemFromUrl(entry.name));
+      });
     } catch {}
   }
 
-  async function forceReloadImages() {
-    await new Promise(r => setTimeout(r, 500)); // ✅ ページ描画待ち
-    const all = await getAllImages();
-    console.log("🔁 forceReloadImages: found", all.length, "images");
-    console.log("🔁 image URLs:", all);
-    lastImageSet = new Set(all);
-    try {
-      chrome.runtime.sendMessage({ type: "imagesUpdatedFull", images: all });
-    } catch (e) {
-      console.warn("Failed to send full image list:", e);
-    }
+  function collectScriptMedia(items) {
+    const scripts = Array.from(document.scripts || []).slice(-80);
+    scripts.forEach((script) => {
+      try {
+        extractMediaUrlsFromText(script.textContent || "").forEach((url) => pushIfNew(items, mediaItemFromUrl(url)));
+      } catch {}
+    });
   }
+
+  function sendItems(items) {
+    if (!items.length) return;
+    try {
+      if (!chrome?.runtime?.id) return;
+      chrome.runtime.sendMessage({ action: "newMediaFound", media: items }).catch(() => {});
+    } catch {}
+  }
+
+  let timer = null;
+  const pendingRoots = new Set();
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      if (mutation.type === "childList") {
+        mutation.addedNodes.forEach((node) => {
+          if (node.nodeType === Node.ELEMENT_NODE) pendingRoots.add(node);
+        });
+      } else if (mutation.target?.nodeType === Node.ELEMENT_NODE) {
+        pendingRoots.add(mutation.target);
+      }
+    });
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const roots = [...pendingRoots];
+      pendingRoots.clear();
+      sendItems(collectMedia({ roots }));
+    }, 250);
+  });
 
   function startObserver() {
-    if (window.observer) window.observer.disconnect();
-    window.observer = new MutationObserver(debounceUpdate);
-    window.observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["src", "style"]
-    });
-    updateImages();
+    try {
+      observer.observe(document.body || document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "srcset", "poster", "style"] });
+    } catch {}
   }
 
-  let updateTimer = null;
-  function debounceUpdate() {
-    clearTimeout(updateTimer);
-    updateTimer = setTimeout(updateImages, 400);
+  chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+    if (request.action === "ping") {
+      sendResponse({ success: true });
+      return true;
+    }
+    if (request.action === "scanMedia") {
+      try {
+        sendResponse({ success: true, media: collectMedia({ reset: !!request.reset }) });
+      } catch (error) {
+        sendResponse({ success: false, error: error.message || String(error), media: [] });
+      }
+      return true;
+    }
+    if (request.action === "resetScan") {
+      seenUrls.clear();
+      sendResponse({ success: true });
+      return true;
+    }
+    if (request.action === "fetchMediaAsDataUrl") {
+      (async () => {
+        try {
+          const response = await fetchWithCredentialFallback(request.url);
+          const contentType = (response.headers.get("content-type") || "").toLowerCase();
+          if (contentType.includes("text/html")) {
+            sendResponse({ success: false, error: "HTML response" });
+            return;
+          }
+          const blob = await response.blob();
+          const reader = new FileReader();
+          reader.onloadend = () => sendResponse({ success: true, dataUrl: reader.result });
+          reader.onerror = () => sendResponse({ success: false, error: "FileReader failed" });
+          reader.readAsDataURL(blob);
+        } catch (error) {
+          sendResponse({ success: false, error: error.message || String(error) });
+        }
+      })();
+      return true;
+    }
+    if (request.action === "fetchHlsText") {
+      (async () => {
+        try {
+          const response = await fetchWithCredentialFallback(request.url, {
+            referrerPolicy: "strict-origin-when-cross-origin"
+          });
+          sendResponse({ success: true, text: await response.text() });
+        } catch (error) {
+          sendResponse({ success: false, error: error.message || String(error) });
+        }
+      })();
+      return true;
+    }
+    if (request.action === "fetchHlsSegmentAsDataUrl") {
+      (async () => {
+        try {
+          const response = await fetchWithCredentialFallback(request.url, {
+            referrerPolicy: "strict-origin-when-cross-origin"
+          });
+          const blob = await response.blob();
+          const reader = new FileReader();
+          reader.onloadend = () => sendResponse({ success: true, dataUrl: reader.result });
+          reader.onerror = () => sendResponse({ success: false, error: "FileReader failed" });
+          reader.readAsDataURL(blob);
+        } catch (error) {
+          sendResponse({ success: false, error: error.message || String(error) });
+        }
+      })();
+      return true;
+    }
+    return false;
+  });
+
+  function notifyPageChanged() {
+    seenUrls.clear();
+    try {
+      if (chrome?.runtime?.id) chrome.runtime.sendMessage({ action: "contentPageChanged", url: location.href }).catch(() => {});
+    } catch {}
+    setTimeout(() => sendItems(collectMedia({ reset: true })), 300);
   }
 
-  function hookHistoryEvents() {
+  function hookHistory() {
     const originalPushState = history.pushState;
     const originalReplaceState = history.replaceState;
-
-    history.pushState = function () {
-      originalPushState.apply(this, arguments);
-      window.dispatchEvent(new Event("locationchange"));
+    history.pushState = function pushState() {
+      const result = originalPushState.apply(this, arguments);
+      window.dispatchEvent(new Event("downloaderLocationChange"));
+      return result;
     };
-
-    history.replaceState = function () {
-      originalReplaceState.apply(this, arguments);
-      window.dispatchEvent(new Event("locationchange"));
+    history.replaceState = function replaceState() {
+      const result = originalReplaceState.apply(this, arguments);
+      window.dispatchEvent(new Event("downloaderLocationChange"));
+      return result;
     };
-
-    window.addEventListener("popstate", () => window.dispatchEvent(new Event("locationchange")));
-    window.addEventListener("locationchange", () => {
-      clearTimeout(window.__locationChangeTimer);
-      window.__locationChangeTimer = setTimeout(() => {
-        try {
-          chrome.runtime.sendMessage({ type: "pageChanged" });
-        } catch {}
-        startObserver();
-      }, 300);
-    });
-
-    chrome.runtime.onMessage.addListener((message) => {
-      if (message.type === "tabActivated") {
-        console.log("Tab activated:", location.href);
-        startObserver();
-      }
-    });
-
-    chrome.runtime.onMessage.addListener((message) => {
-      console.log("📩 Message received in content.js:", message.type);
-      if (message.type === "requestImages") {
-        updateImages();
-      } else if (message.type === "forceReload") {
-        console.log("🔁 forceReload triggered");
-        forceReloadImages();
-      }
-    });
+    window.addEventListener("popstate", () => window.dispatchEvent(new Event("downloaderLocationChange")));
+    window.addEventListener("downloaderLocationChange", notifyPageChanged);
   }
 
-  // URL監視補強
-  let lastUrl = location.href;
-  setInterval(() => {
-    if (location.href !== lastUrl) {
-      lastUrl = location.href;
-      window.dispatchEvent(new Event("locationchange"));
-    }
-  }, 1000);
-
-  hookHistoryEvents();
+  hookHistory();
   startObserver();
+  setTimeout(() => sendItems(collectMedia()), 250);
+  setInterval(() => {
+    const items = [];
+    collectPerformanceMedia(items);
+    sendItems(items);
+  }, 2000);
 })();

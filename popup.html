@@ -1,31 +1,38 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>Open Side Panel</title>
-  <style>
-    body {
-      font-family: sans-serif;
-      padding: 10px;
-      width: 200px;
-    }
-    button {
-      width: 100%;
-      padding: 8px;
-      font-size: 14px;
-      cursor: pointer;
-      background-color: #0078d4;
-      color: white;
-      border: none;
-      border-radius: 4px;
-    }
-    button:hover {
-      background-color: #005fa3;
-    }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Media</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <button id="openPanel">📂 Open Image Panel</button>
+  <main class="container">
+    <div class="toolbar">
+      <button id="scanButton" class="icon-button primary" type="button" title="Scan page" aria-label="Scan page">
+        <span aria-hidden="true">Scan</span>
+      </button>
+      <button id="clearButton" class="icon-button" type="button" title="Clear" aria-label="Clear">
+        <span aria-hidden="true">Clear</span>
+      </button>
+      <button id="downloadAllButton" class="icon-button" type="button" title="Download all" aria-label="Download all" disabled>
+        <span aria-hidden="true">All</span>
+      </button>
+      <span id="mediaCount" class="count">0</span>
+    </div>
+
+    <div class="filter-tabs" aria-label="Filter">
+      <button class="tab-btn active" type="button" data-type="all">All</button>
+      <button class="tab-btn" type="button" data-type="image">Images</button>
+      <button class="tab-btn" type="button" data-type="video">Videos</button>
+      <button class="tab-btn" type="button" data-type="audio">Audio</button>
+    </div>
+
+    <section id="mediaList" class="media-list" aria-live="polite">
+      <div class="empty-state">Scan the page</div>
+    </section>
+  </main>
+
   <script src="popup.js"></script>
 </body>
 </html>
